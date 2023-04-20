@@ -1,12 +1,14 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io/ioutil"
 	"log"
 	"net/rpc"
 	"os"
+	"sort"
 	"time"
 )
 
@@ -48,18 +50,20 @@ func Worker(mapf func(string, string) []KeyValue,
 
 func callAskWork() {
 
-	args := AskWorkArgs{os.Getpid()}
+	args := AskWorkArgs{}
 
 	reply := AskWorkReply{}
 
 	ok := call("Coordinator.AskWork", &args, &reply)
 	if ok {
-		switch reply.taskType {
+		switch reply.TaskType {
 		case MapTaskType: // map work
-			doMapTask(reply.fileName, reply.nReduce, reply.taskId)
+			doMapTask(reply.FileName, reply.NReduce, reply.TaskId)
 
 		case ReduceTaskType: // reduce work
+			doReduceWork(reply.FileNames, reply.TaskId)
 		}
+		callAskWork()
 	} else {
 		time.Sleep(time.Second)
 		callAskWork()
@@ -69,9 +73,9 @@ func callAskWork() {
 func callTaskFinished(taskType int, taskId int, fileNames map[int]string) {
 	args := TaskFinishedArgs{}
 
-	args.taskType = taskType
-	args.taskId = taskId
-	args.fileNames = fileNames
+	args.TaskType = taskType
+	args.TaskId = taskId
+	args.FileNames = fileNames
 	reply := TaskFinishedReply{}
 
 	err := call("Coordinator.TaskFinished", &args, &reply)
@@ -99,14 +103,56 @@ func doMapTask(fileName string, NReduce int, taskId int) {
 	}
 	fileNames := map[int]string{}
 	for i, v := range buckets {
-		oname := "mr-" + string(i)
+		oname := "mr-" + fmt.Sprint(taskId) + "-" + fmt.Sprint(i)
 		fileNames[i] = oname
 		ofile, _ := os.Create(oname)
+		enc := json.NewEncoder(ofile)
 		for _, vv := range v {
-			fmt.Fprintf(ofile, "%v %v\n", vv.Key, vv.Value)
+			enc.Encode(&vv)
 		}
 	}
 	callTaskFinished(MapTaskType, taskId, fileNames)
+}
+
+func doReduceWork(fileNames []string, taskId int) {
+	fmt.Printf("doReduceWork: fileNames %v\n", fileNames)
+	kva := []KeyValue{}
+	for _, v := range fileNames {
+		file, err := os.Open(v)
+		if err != nil {
+			log.Fatalf("cannot open %v", v)
+		}
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			kva = append(kva, kv)
+		}
+	}
+	sort.Sort(ByKey(kva))
+	oname := "mr-out-" + fmt.Sprint(taskId)
+	ofile, _ := os.Create(oname)
+	i := 0
+	for i < len(kva) {
+		j := i + 1
+		for j < len(kva) && kva[j].Key == kva[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, kva[k].Value)
+		}
+		output := Reducef(kva[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
+
+		i = j
+	}
+	ofile.Close()
+	callTaskFinished(ReduceTaskType, taskId, map[int]string{})
 }
 
 // send an RPC request to the coordinator, wait for the response.
@@ -125,7 +171,7 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	if err == nil {
 		return true
 	}
-
+	fmt.Println(err)
 	os.Exit(0)
 	return false
 }

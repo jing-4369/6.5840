@@ -2,6 +2,7 @@ package mr
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -38,24 +39,25 @@ type reduceTask struct {
 }
 
 type task struct {
-	state    int // 1 for idle, 2 for in-progress, 3 for completed
-	workerId int
+	state int // 1 for idle, 2 for in-progress, 3 for completed
+	// workerId int
 }
 
 // Your code here -- RPC handlers for the worker to call.
 func (c *Coordinator) AskWork(args *AskWorkArgs, reply *AskWorkReply) error {
 	if c.mapTaskFinished == len(c.mapTasks) && c.reduceTaskFinished == len(c.reduceTasks) {
+		// fmt.Println("Coordinator: all finish")
 		return errors.New("Coordinator has exited")
 	}
 	if c.mapTaskFinished < len(c.mapTasks) {
-		reply.taskType = MapTaskType
 		for i, v := range c.mapTasks {
 			if v.state == Idle {
 				v.state = InProgress
-				v.workerId = args.workerId
-				reply.fileName = v.fileName
-				reply.taskId = i
-				reply.nReduce = c.nReduce
+				// v.workerId = args.workerId
+				reply.TaskType = MapTaskType
+				reply.FileName = v.fileName
+				reply.TaskId = i
+				reply.NReduce = c.nReduce
 				return nil
 			}
 		}
@@ -66,26 +68,31 @@ func (c *Coordinator) AskWork(args *AskWorkArgs, reply *AskWorkReply) error {
 	for i, v := range c.reduceTasks {
 		if v.state == Idle {
 			v.state = InProgress
-			v.workerId = args.workerId
-			reply.fileNames = c.midFiles[i]
-			reply.taskId = i
+			// v.workerId = args.workerId
+			reply.TaskType = ReduceTaskType
+			reply.FileNames = c.midFiles[i]
+			reply.TaskId = i
 			return nil
 		}
 	}
 	return nil
 }
 
-func (c *Coordinator) TaskFinished(args *TaskFinishedArgs, reply *TaskFinishedReply) {
-	if args.taskType == MapTaskType {
+func (c *Coordinator) TaskFinished(args *TaskFinishedArgs, reply *TaskFinishedReply) error {
+	if args.TaskType == MapTaskType {
+		fmt.Println("finish maptask ", args.TaskId)
 		c.mapTaskFinished++
-		c.mapTasks[args.taskId].state = Completed
-		for k, v := range args.fileNames {
+		c.mapTasks[args.TaskId].state = Completed
+		for k, v := range args.FileNames {
 			c.midFiles[k] = append(c.midFiles[k], v)
 		}
+		fmt.Printf("Coordinator: finish midFiles %v\n", c.midFiles)
 	} else {
+		fmt.Println("finish reducetask ", args.TaskId)
 		c.reduceTaskFinished++
-		c.reduceTasks[args.taskId].state = Completed
+		c.reduceTasks[args.TaskId].state = Completed
 	}
+	return nil
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -123,12 +130,13 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	// Your code here.
 	for _, file := range files {
-		c.mapTasks = append(c.mapTasks, mapTask{task{Idle, 0}, file})
+		c.mapTasks = append(c.mapTasks, mapTask{task{Idle}, file})
 	}
-	for i := 1; i < nReduce; i++ {
-		c.reduceTasks = append(c.reduceTasks, reduceTask{task{Idle, 0}})
+	for i := 0; i < nReduce; i++ {
+		c.reduceTasks = append(c.reduceTasks, reduceTask{task{Idle}})
 	}
 	c.nReduce = nReduce
+	c.midFiles = make(map[int][]string)
 	c.server()
 	return &c
 }

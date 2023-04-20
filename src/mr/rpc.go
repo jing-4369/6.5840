@@ -11,20 +11,20 @@ import "strconv"
 
 // Add your RPC definitions here.
 type AskWorkArgs struct {
-	workerId int
+	WorkerId int
 }
 type AskWorkReply struct {
-	taskType  int // 1 for map task, 2 for reduce tas
-	taskId    int
-	fileName  string   // for map task
-	fileNames []string // for reduce task
-	nReduce   int
+	TaskType  int // 1 for map task, 2 for reduce tas
+	TaskId    int
+	FileName  string   // for map task
+	FileNames []string // for reduce task
+	NReduce   int
 }
 
 type TaskFinishedArgs struct {
-	taskType  int
-	taskId    int
-	fileNames map[int]string
+	TaskType  int
+	TaskId    int
+	FileNames map[int]string
 }
 type TaskFinishedReply struct{}
 
