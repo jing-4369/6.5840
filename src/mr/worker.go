@@ -54,20 +54,17 @@ func callAskWork() {
 
 	reply := AskWorkReply{}
 
-	ok := call("Coordinator.AskWork", &args, &reply)
-	if ok {
-		switch reply.TaskType {
-		case MapTaskType: // map work
-			doMapTask(reply.FileName, reply.NReduce, reply.TaskId)
+	call("Coordinator.AskWork", &args, &reply)
+	switch reply.TaskType {
+	case MapTaskType: // map work
+		doMapTask(reply.FileName, reply.NReduce, reply.TaskId)
 
-		case ReduceTaskType: // reduce work
-			doReduceWork(reply.FileNames, reply.TaskId)
-		}
-		callAskWork()
-	} else {
+	case ReduceTaskType: // reduce work
+		doReduceWork(reply.FileNames, reply.TaskId)
+	case 0:
 		time.Sleep(time.Second)
-		callAskWork()
 	}
+	callAskWork()
 
 }
 func callTaskFinished(taskType int, taskId int, fileNames map[int]string) {
@@ -78,14 +75,12 @@ func callTaskFinished(taskType int, taskId int, fileNames map[int]string) {
 	args.FileNames = fileNames
 	reply := TaskFinishedReply{}
 
-	err := call("Coordinator.TaskFinished", &args, &reply)
-	if !err {
-		fmt.Println(err)
-	}
+	call("Coordinator.TaskFinished", &args, &reply)
 
 }
 
 func doMapTask(fileName string, NReduce int, taskId int) {
+	// fmt.Println("doMapTask: ", taskId)
 	file, err := os.Open(fileName)
 	if err != nil {
 		log.Fatalf("cannot open %v", fileName)
@@ -103,19 +98,20 @@ func doMapTask(fileName string, NReduce int, taskId int) {
 	}
 	fileNames := map[int]string{}
 	for i, v := range buckets {
-		oname := "mr-" + fmt.Sprint(taskId) + "-" + fmt.Sprint(i)
-		fileNames[i] = oname
-		ofile, _ := os.Create(oname)
-		enc := json.NewEncoder(ofile)
+		tempName := "tmp-mr-" + fmt.Sprint(taskId) + "-" + fmt.Sprint(i)
+		tempf, _ := os.Create(tempName)
+		fileNames[i] = tempName
+		enc := json.NewEncoder(tempf)
 		for _, vv := range v {
 			enc.Encode(&vv)
 		}
+		tempf.Close()
 	}
 	callTaskFinished(MapTaskType, taskId, fileNames)
 }
 
 func doReduceWork(fileNames []string, taskId int) {
-	fmt.Printf("doReduceWork: fileNames %v\n", fileNames)
+	// fmt.Println("doReduceWork: ", taskId)
 	kva := []KeyValue{}
 	for _, v := range fileNames {
 		file, err := os.Open(v)
@@ -132,8 +128,9 @@ func doReduceWork(fileNames []string, taskId int) {
 		}
 	}
 	sort.Sort(ByKey(kva))
-	oname := "mr-out-" + fmt.Sprint(taskId)
-	ofile, _ := os.Create(oname)
+	tempName := "mr-out-" + fmt.Sprint(taskId)
+	tmpf, _ := os.Create(tempName)
+
 	i := 0
 	for i < len(kva) {
 		j := i + 1
@@ -147,18 +144,19 @@ func doReduceWork(fileNames []string, taskId int) {
 		output := Reducef(kva[i].Key, values)
 
 		// this is the correct format for each line of Reduce output.
-		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
+		fmt.Fprintf(tmpf, "%v %v\n", kva[i].Key, output)
 
 		i = j
 	}
-	ofile.Close()
-	callTaskFinished(ReduceTaskType, taskId, map[int]string{})
+	tmpf.Close()
+	callTaskFinished(ReduceTaskType, taskId, map[int]string{0: tempName})
+
 }
 
 // send an RPC request to the coordinator, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
-func call(rpcname string, args interface{}, reply interface{}) bool {
+func call(rpcname string, args interface{}, reply interface{}) {
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := coordinatorSock()
 	c, err := rpc.DialHTTP("unix", sockname)
@@ -168,10 +166,7 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	defer c.Close()
 
 	err = c.Call(rpcname, args, reply)
-	if err == nil {
-		return true
+	if err != nil {
+		os.Exit(0)
 	}
-	fmt.Println(err)
-	os.Exit(0)
-	return false
 }

@@ -10,9 +10,7 @@ import "os"
 import "strconv"
 
 // Add your RPC definitions here.
-type AskWorkArgs struct {
-	WorkerId int
-}
+type AskWorkArgs struct{}
 type AskWorkReply struct {
 	TaskType  int // 1 for map task, 2 for reduce tas
 	TaskId    int
